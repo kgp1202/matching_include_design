@@ -1,0 +1,172 @@
+ 요구사항 : client의 요청 -> server의 매칭 중 -> server의 매칭 완료 -> server의 매칭 정보 전달
+
+ 위의 요구사항을 구현하는데 있어서 크게 두가지 방법이 존재한다. http 방식과 non-http 방식이다.
+
+ - http방식을 이용하면 두번의 http 연결을 통해서 구현할 수 있다. "client의 요청" 부분에서 첫번째 http연결을 하여 client의 
+요청을 전달한다. server에서는 계속 이러한 정보를 받아서 매칭을 해준다. 그리고, client는 AJAX를 통해서 계속해서 매칭이
+완료되었는지 server에게 물어보는 방식이다. server에서 매칭이 완료되어지면 AJAX연결에 대한 응답으로 매칭 정보를
+전달하여 client의 요청에 대한 응답을 하게 된다.
+ 
+ - non-http방식은 http를 이용하지 않고 socket단계에서 완료한는 방식으로 구현할 수 있다. client에서 요청을 보내는 방식은
+socket으로 server에 연결을 요청하고나서 http방식과는 다르게 연결을 닫지않고 socket을 유지한다. 그리고 이러한 socket을 통해서
+완료가 되면 server에서 완료되었다는 정보를 전달하면 된다. 
+
+  
+ 첫번째 방식의 경우는 구현이 편리하고 유지보수도 잘 될것으로 예상되지만 대체적으로 socket을 유지하는 것보다 socket을 
+연결하는 과정의 오버헤드가 더 크기 때문에 server에서의 효율성은 두번째 방식이 더 클것으로 예상된다.
+두가지 방식으로 모두 구현 할 계획이다. 첫번째 방식은 flask를 이용한 python으로 구현할 계획이고 두번째 방식은 c를 이용해서
+구현할 계획이다.
+
+ 아래의 내용들은 두번째 방식으로 구현할 때 필요할 정보들에 대한 요약과 고찰이다.
+
+*****************************************************************************************************************************
+ 성능 저하 요소로는 크게 Data copy, Context switches, Memory allocation, Lock contention이 있다.
+
+ Data copy
+ 자료복사에 의한 성능 저하로써, 대부분의 사람들이 인지는 하고 있다. 하지만 성능을 저하시키는 경우는, 
+숨겨지거나 위장되어지는 경우인데, 예로는 Hash function을 들 수 있다. hash function의 경우에는 복사 뿐만이 아니라 값에 대한
+추가적인 계산까지 들어간다. 이러한 Data copy를 피하기 위해서는 단순한 buffer pointer가 아닌 buffer descriptor형태로 버퍼를
+전달하는 것이 좋은데 이러한 buffer descriptor의 내용은 4가지중 하나를 이용한다.
+ - A pointer and length for the whole buffer.
+ - A pointer and length, or offset and length, for the part of the buffer that's actually filled.
+ - Forward and back pointers to other buffer descriptors in a list.
+ - A reference count.
+
+ Context Switches
+ 발생 원인으로는 서버가 가지고 있는 CPU 프로세서보다 더 많은 쓰레드를 사용할 때, 발생한다. 쓰레드의 수가
+증가 할수록 Context Switch도 exponential하게 증가한다. 이에 대한 대안으로 단일 쓰레드를 이용하거나 쓰레드의
+수를 프로세서 수로 제한하는 방법이있다. 이러한 방법은 Context Switch뿐만 아니라 locking도 피할 수 있다. 단일
+스레드로 여러 연결을 처리하는 방법으로는 select/poll, asynchronous I/O, signals or completion ports가 있다.
+ Context Switch의 두번째 발생원인은 하나의 스레드에서 다른 스레드로 작업을 변경할 때 발생된다. 그러므로 
+멀티 쓰레드에서의 event-driven 방식이면 대칭적으로 스레드를 구성하여 context switch가 발생하지 않도록 해야
+한다. 멀티 쓰레드에서의 event-driven 방식의 경우에서 스레드를 제한하는 방법은 semaphore를 통해서 Listening하는
+스레드가 이벤트 처리 스레드의 수를 제한하는 방식을 사용할수 있다.
+ 
+ Memory Allocation
+ 메모리 할당과 해제에 따른 성능의 저하를 막기 위해서는 두가지 방법이 있다. 
+ 첫째는 미리 메모리를 선언하는 것이다. 그 이유는 메모리의 낭비가 있을지라도 system memory allocator를 통하면
+한번의 할당이 여러개의 할당을 모은 것보다 효율적이기 때문이다. 두번째 방법은 lookaside list를 만드는 것입니다.
+자주 할당, 해제되는 객체에 대해서 미리 list에 넣어놓음으로써 메모리 할당에 드는 비용을 줄이는 방법입니다. 즉,
+해제된 객체를 list에 넣고 실제로 해제하지 않다가 그 객체에 대한 선언이 발생하면 이를 줌으로써 메모리 할당을
+줄일 수 있습니다.
+
+ Lock Contention
+ 효율적인 Locking scheme으로는 다음과 같은 그래프로 접근하는 것이 좋다.
+  - The vertical axis represents code. If you're using a staged architecture with non-branching stages, 
+   you probably already have a diagram showing these divisions, like the ones everybody uses for 
+   OSI-model network protocol stacks.
+  - The horizontal axis represents data. In every stage, each request should be assigned to a data set 
+   with its own resources separate from any other set.  
+
+
+참고자료 http://pl.atyp.us/content/tech/servers.html
+******************************************************************************************************************************
+
+
+******************************************************************************************************************************
+Thread-based Server Architectures vs Event-driven Server Architectures
+
+ Thread-based Server Architectures
+ 장점 : 구현이 쉽고 간단하다. Synchronous, blocking I/O를 통해서 I/O과정이 자연스럽다.
+        실질적인 Concurrency가 가능하다. 멀티 코어에서 효율적이다.(스레드 수 제한시)
+ 단점 : 많은 Request가 있게되면 이에 따른 메모리 소모와 Context switch에 따른 CPU time loss가 심하다.
+        간접적으로 CPU cache misses 확률이 증가한다.  
+
+ Event-driven Server Architectures
+ - Reactor Pattern
+	synchronous, non-blocking I/O모델이다. 
+	reactor 클래스는 오직 단일 스레드에서만 동작하므로, OS에서의 스레드 스케줄링을 받을 수 없다.
+	Handler의 수에 제한이 있다.
+	ex) select, poll
+
+ - Proactor Pattern
+	asynchronous, non-blocking I/O
+	단일 스레드를 이용해서 병렬로 동작 가능
+	프로그래밍과 디버깅이 어렵다.
+	OS에서 asynchronous I/O를 지원해야 가능하다.
+
+참고자료 http://berb.github.io/diploma-thesis/original/042_serverarch.html
+참고자료 http://ozt88.tistory.com/25
+참고자료 http://jeremyko.blogspot.kr/2012/05/proactor-design-pattern.html => 정리 잘됨.
+******************************************************************************************************************************
+
+
+******************************************************************************************************************************
+반복 서버, 병행 서버
+Overlapped IO Model, IO Completion Port Model
+
+참고자료 http://blog.secmem.org/671
+******************************************************************************************************************************
+
+
+******************************************************************************************************************************
+select vs epoll
+
+ select의 한계
+ - 순회가능한 fd의 개수가 제한된다.(1024개)
+ - 모든 파일 디스크립터를 순회하는 것은 불필요하다.
+ - FD_SET정보를 매번 OS에게 넘겨주는 방식보다 FD_SET에 변화가 있을때만 넘겨주는 방식이 더 좋다.
+ - 소켓의 이벤트들을 선형탐색을 통해서 확인해야 한다.(O(N) time)
+ 
+ epoll
+ - FD_SET정보를 매번 OS에게 넘겨주지 않고 해당 영역의 정보를 OS가 관리한다.(특정 함수로 epoll_set을 수정가능)
+ - ISSET 대신에 이벤트가 발생한 epoll_set으로 확인할수 있다.(O(1) time)
+
+
+참고자료 http://ozt88.tistory.com/21
+******************************************************************************************************************************
+
+ 
+결론 : 서버에서 필요로 하는 것은 적은 양의 데이터를 전송하지만 최대한 많은 연결을 지향하는 모델이다. 그러므로 굳이 asynchronous I/O를
+이용할 필요가 없다. 따라서 Reactor Pattern을 이용하여 구현하는 것이 바람직해 보인다. Linux를 이용할 예정이며 또한 메모리가 그리 
+부족하지 않기 때문에 가장 좋은 구현 방식은 epoll을 사용하는 것이다.
+ 하지만 주의해야 할것이 있다. 현재는 단일 프로세서 서버를 이용할 것이기 때문에 단일 스레드를 기반으로 구현하는 것이 바람직 하지만
+확장성을 고려하여 멀티 스레드도 고려사항에 넣어야 한다. 이에 관련된 정리는 "server_thread_mention.txt"에 두었다.
+
+
+
+
+
+******************************************************************************************************************************
+******************************************************************************************************************************
+******************************************************************************************************************************
+******************************************************************************************************************************
+******************************************************************************************************************************
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
