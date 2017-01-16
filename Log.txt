@@ -12,3 +12,7 @@ http://www.kegel.com/c10k.html
 2017.1.13
 (서버 설계) select/epoll/kqueue/IOCP 확인
 * http://ozt88.tistory.com/21
+
+2017.1.16
+(설버 설계) thundering herd problem 해결법
+* ngnix 소스에서 해법 찾기(ubuntu)
